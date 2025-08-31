@@ -1,0 +1,25 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = __importDefault(require("express"));
+const cors_1 = __importDefault(require("cors"));
+const authRoutes_1 = __importDefault(require("./routes/authRoutes"));
+const topsisRoutes_1 = __importDefault(require("./routes/topsis/topsisRoutes"));
+const criteriaRoutes_1 = __importDefault(require("./routes/topsis/criteriaRoutes"));
+const alternativeRoutes_1 = __importDefault(require("./routes/topsis/alternativeRoutes"));
+const alternativeRoutes_2 = __importDefault(require("./routes/saw/alternativeRoutes"));
+const scoreTopsisRoutes_1 = __importDefault(require("./routes/topsis/scoreTopsisRoutes"));
+const rankingRoutes_1 = __importDefault(require("./routes/topsis/rankingRoutes"));
+const app = (0, express_1.default)();
+app.use((0, cors_1.default)());
+app.use(express_1.default.json());
+app.use("/api/auth", authRoutes_1.default);
+app.use("/api/topsis", topsisRoutes_1.default);
+app.use("/api/criteria", criteriaRoutes_1.default);
+app.use("/api/alternative", alternativeRoutes_1.default);
+app.use("/api/saw/alternative", alternativeRoutes_2.default);
+app.use("/api/scores", scoreTopsisRoutes_1.default);
+app.use("/api/results", rankingRoutes_1.default);
+exports.default = app;
