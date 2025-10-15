@@ -14,6 +14,11 @@ export const getScoresPage = async (
   totalRows: number;
   totalPages: number;
 }> => {
+  const [countResult] = await db.query(
+    "SELECT COUNT(*) as total from alternative_topsis"
+  );
+  const totalRows = (countResult as any[])[0].total;
+  const totalPages = Math.ceil(totalRows / pageSize);
   // ambil data candidate berdasarkan limit dan offset
   const [alternativeRows] = await db.query(
     `SELECT id, name FROM alternative_topsis ORDER BY id LIMIT ? OFFSET ?`,
@@ -30,8 +35,8 @@ export const getScoresPage = async (
   if (alternativeIds.length === 0) {
     return {
       data: [],
-      totalRows: 0,
-      totalPages: 0,
+      totalRows,
+      totalPages,
     };
   }
 
@@ -51,12 +56,6 @@ export const getScoresPage = async (
   //console.log("Params", alternativeIds);
 
   const [rows] = await db.query(query, alternativeIds);
-
-  const [countResult] = await db.query(
-    "SELECT COUNT(*) as total from alternative_topsis"
-  );
-  const totalRows = (countResult as any[])[0].total;
-  const totalPages = Math.ceil(totalRows / pageSize);
 
   return {
     data: rows as ScoreTopsis[],
@@ -113,7 +112,15 @@ export async function deleteScores(ids: number[]) {
       `DELETE FROM scores_topsis WHERE alternative_id IN (?)`,
       [ids]
     );
-    return result;
+    const resultAlternatives = await conn.query(
+      `DELETE FROM alternative_topsis WHERE id IN (?)`,
+      [ids]
+    );
+    const resultRanking = await conn.query(
+      `DELETE FROM scores_topsis WHERE alternative_id IN (?)`,
+      [ids]
+    );
+    return [result, resultAlternatives, resultAlternatives];
   } catch (err) {
     throw err;
   } finally {

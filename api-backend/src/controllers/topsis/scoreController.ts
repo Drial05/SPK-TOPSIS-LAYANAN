@@ -7,45 +7,12 @@ import {
   updateScore,
   deleteScores,
 } from "../../models/topsis/scoreModel";
+import { convertScore, loadBobotCache } from "../../services/service.topsis";
 
 interface Score {
   id: number;
-  name: string;
+  criteria_name: string;
   value: number;
-}
-
-// konversi nilai range (0-100) ke rating (1-5)
-function convertScore(value: number, name: string): number {
-  name = name.toLowerCase().trim();
-  // gunakan batas konsisten >=
-  if (name == "frekuensi penggunaan") {
-    if (value >= 400) return 5;
-    if (value >= 300) return 4;
-    if (value >= 200) return 3;
-    if (value >= 100) return 2;
-    return 1;
-  } else if (name == "jumlah pengguna") {
-    if (value >= 300) return 5;
-    if (value >= 225) return 4;
-    if (value >= 150) return 3;
-    if (value >= 75) return 2;
-    return 1;
-  } else if (name == "rata-rata nominal transaksi") {
-    if (value >= 1000000) return 5;
-    if (value >= 750000) return 4;
-    if (value >= 500000) return 3;
-    if (value >= 250000) return 2;
-    return 1;
-  } else if (name == "biaya transaksi") {
-    // cost di balik
-    if (value <= 1000) return 5;
-    if (value <= 2000) return 4;
-    if (value <= 3000) return 3;
-    if (value <= 4000) return 2;
-    return 1;
-  }
-  // default kalo tidak ada yang cocok
-  return 1;
 }
 
 export const getScores = async (req: Request, res: Response) => {
@@ -58,6 +25,8 @@ export const getScores = async (req: Request, res: Response) => {
       pageSize,
       offset
     );
+
+    await loadBobotCache();
 
     // konversi nilai ke matriks keputusan
     const convertedData: (Score & { rating: number })[] = data.map(
@@ -175,6 +144,11 @@ export const importScoresFromFile = async (req: Request, res: Response) => {
 
     // insert alternative baru ke tabel alternative_topsis
     if (newAlternatives.length) {
+      // hapus data alternative lama
+      await db.query("DELETE FROM alternative_topsis");
+      // di reset di mulai dari 1
+      await db.query("ALTER TABLE alternative_topsis AUTO_INCREMENT = 1");
+
       const insertData = newAlternatives.map((a) => [a.alternative_id, a.name]);
       await db.query("INSERT INTO alternative_topsis (id, name) VALUES ?", [
         insertData,
@@ -202,15 +176,6 @@ export const importScoresFromFile = async (req: Request, res: Response) => {
       .json({ error: "Failed to import scores from file", err });
   }
 };
-
-// function isSpecialChannel(name: string): boolean {
-//   const normalized = name.toLowerCase().replace(/[\s-]/g, "");
-//   return (
-//     normalized.includes("ewallet") ||
-//     normalized.includes("skn") ||
-//     normalized.includes("online")
-//   );
-// }
 
 function calculateAvgFee(data: any[]): number {
   const filtered = data.filter((d) => Number(d.fee) > 0);
@@ -269,21 +234,6 @@ export const importScoresFromXlsx = async (req: Request, res: Response) => {
     // format alternative data
     const alternativeNames = Object.keys(grouped);
 
-    // cek alternative yang sudah ada
-    // const [existingRaw] = await db.query(
-    //   "SELECT id, name FROM alternative_topsis WHERE name IN (?)",
-    //   [alternativeNames]
-    // );
-
-    // const existingAlternatives = existingRaw as { id: number; name: string }[];
-
-    // const existingNameSet = new Set(existingAlternatives.map((a) => a.name));
-
-    // insert alternative baru
-    // const newNames = alternativeNames.map(
-    //   (name) => !existingNameSet.has(name)
-    // );
-
     const newNames = alternativeNames;
     if (newNames.length) {
       const insertData = newNames.map((name) => [name]);
@@ -317,21 +267,19 @@ export const importScoresFromXlsx = async (req: Request, res: Response) => {
 
       // Rata - rata nominal transaksi
       const avgNominal =
-        data.reduce((sum, d) => sum + Number(d.trx_amt || 0), 0) / frekuensi;
+        data.reduce((sum, d) => {
+          // ambil nilai trx_amt yang valid
+          const amt = Number(d.trx_amt || 0);
+
+          if (d.ccy === "USD") {
+            return sum + amt * 16000; // konversi ke IDR
+          } else {
+            return sum + amt;
+          }
+        }, 0) / frekuensi;
 
       // biaya rata-rata transaksi total
       const avgFee = calculateAvgFee(data);
-      // let avgFee: 0;
-      // if (isSpecialChannel(name)) {
-      //   const filtered = data.filter((d) => Number(d.fee) > 0);
-      //   avgFee =
-      //     filtered.reduce((sum, d) => sum + Number(d.fee || 0), 0) /
-      //     (filtered.length || 1);
-      // } else {
-      //   avgFee =
-      //     data.reduce((sum, d) => sum + Number(d.fee || 0), 0) /
-      //     (frekuensi || 1);
-      // }
 
       // masukan ke values sesuai id criteria di database
       if (criteriaMap["frekuensi penggunaan"])
@@ -347,12 +295,14 @@ export const importScoresFromXlsx = async (req: Request, res: Response) => {
           avgNominal,
         ]);
 
-      if (criteriaMap["biaya transaksi"])
-        values.push([altId, criteriaMap["biaya transaksi"], avgFee]);
+      if (criteriaMap["rata rata biaya transaksi"])
+        values.push([altId, criteriaMap["rata rata biaya transaksi"], avgFee]);
     });
 
     // hapus data skor lama
     await db.query("DELETE FROM scores_topsis");
+    // hapus data skor lama
+    await db.query("ALTER TABLE scores_topsis AUTO_INCREMENT = 1");
 
     // insert skor baru
     if (values.length) {
@@ -366,6 +316,7 @@ export const importScoresFromXlsx = async (req: Request, res: Response) => {
       message: "Scores imported successfully",
       rows: values.length,
       newAlternatives: newNames.length,
+      totalRows: rows.length,
     });
   } catch (err) {
     console.error("Error importing scores from file:", err);

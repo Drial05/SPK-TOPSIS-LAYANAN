@@ -1,37 +1,72 @@
+import { RowDataPacket } from "mysql2";
 import { AlternativeTopsis, CriteriaTopsis, ScoreTopsis } from "../types";
 import { db } from "../utils/db";
 
+type BobotCacheItem = {
+  min: number;
+  max: number;
+  score: number;
+};
+
+type BobotCache = {
+  [criteria_name: string]: BobotCacheItem[];
+};
+
+const bobotCache: BobotCache = {};
+
+// kosongkan cache lama agar tidak numpuk
+for (const key in bobotCache) {
+  delete bobotCache[key];
+}
+
+// load bobot dari db sekali
+export async function loadBobotCache() {
+  const [rows] = await db.query<RowDataPacket[]>(
+    `SELECT c.name AS criteria_name, b.min_value AS min, b.max_value AS max, score
+    FROM bobot_topsis b
+    JOIN criteria_topsis c ON b.id_criteria = c.id`
+  );
+
+  rows.forEach((row) => {
+    const name = row.criteria_name.toLowerCase().trim();
+    if (!bobotCache[name]) bobotCache[name] = [];
+    bobotCache[name].push({
+      min: Number(row.min),
+      max: Number(row.max),
+      score: Number(row.score),
+    });
+  });
+
+  // sort tiap range supaya konsisten
+  for (const key in bobotCache) {
+    bobotCache[key].sort((a, b) => a.min - b.min);
+  }
+
+  // tampilkan hasil cache
+  // console.log("📌 Bobot Cache Loaded:");
+  // for (const key in bobotCache) {
+  //   console.log(`\nCriteria: ${key}`);
+  //   console.table(bobotCache[key]);
+  // }
+}
+
 // konversi nilai range (0-100) ke rating (1-5)
-function convertScore(value: number, name: string): number {
-  name = name.toLowerCase().trim();
-  // gunakan batas konsisten >=
-  if (name == "frekuensi penggunaan") {
-    if (value >= 400) return 5;
-    if (value >= 300) return 4;
-    if (value >= 200) return 3;
-    if (value >= 100) return 2;
-    return 1;
-  } else if (name == "jumlah pengguna") {
-    if (value >= 300) return 5;
-    if (value >= 225) return 4;
-    if (value >= 150) return 3;
-    if (value >= 75) return 2;
-    return 1;
-  } else if (name == "rata-rata nominal transaksi") {
-    if (value >= 1000000) return 5;
-    if (value >= 750000) return 4;
-    if (value >= 500000) return 3;
-    if (value >= 250000) return 2;
-    return 1;
-  } else if (name == "biaya transaksi") {
-    // cost di balik
-    if (value <= 1000) return 5;
-    if (value <= 2000) return 4;
-    if (value <= 3000) return 3;
-    if (value <= 4000) return 2;
+export function convertScore(value: number, name: string): number {
+  const key = name.toLowerCase().trim();
+  const ranges = bobotCache[key];
+
+  if (!ranges) {
+    console.warn(`Criteria ${key} tidak ditemukan di cache`);
     return 1;
   }
-  // default kalo tidak ada yang cocok
+
+  for (const r of ranges) {
+    if (r.min <= value && value <= r.max) {
+      return r.score;
+    }
+  }
+
+  // fallback kalau value di luar semua range
   return 1;
 }
 
@@ -43,12 +78,16 @@ export const topsis = async (
   const nAlt = alternatives.length;
   const nCrit = criteria.length;
 
+  // trace object untuk menyimpan log
+  const trace: any = {};
+
   // 1. Normalisasi bobot agar total = 1
   const totalWeight = criteria.reduce((sum, c) => sum + c.weight, 0);
   criteria = criteria.map((c) => ({
     ...c,
     weight: c.weight / totalWeight,
   }));
+  trace.criteriaNormalized = criteria;
 
   // 2. matriks keputusan
   const matrix: number[][] = alternatives.map((alt) => {
@@ -59,11 +98,12 @@ export const topsis = async (
       // rumus untuk range
       // return score ? score.value : 0;
       // rumus untuk konversi ke rating
-      return score ? convertScore(score.value, crit.name.toLowerCase()) : 0;
+      return score ? convertScore(score.value, crit.name) : 0;
     });
   });
+  trace.decisionMatrix = matrix;
 
-  //console.log("hasil matriks keputusan:", matrix);
+  // console.log("hasil matriks keputusan:", matrix);
 
   // 3. normalisasi matriks
   const norm: number[][] = Array.from({ length: nAlt }, () => []);
@@ -74,13 +114,15 @@ export const topsis = async (
       norm[i][j] = denom === 0 ? 0 : matrix[i][j] / denom;
     }
   }
+  trace.normalizedMatrix = norm;
 
-  //console.log("Hasil normalisasi matriks:", norm);
+  // console.log("Hasil normalisasi matriks:", norm);
 
   // 4. matriks terbobot
   const weighted: number[][] = norm.map((row) =>
     row.map((val, j) => val * criteria[j].weight)
   );
+  trace.weightedMatrix = weighted;
 
   //console.log("Hasil matriks terbobot:", weighted);
 
@@ -99,6 +141,11 @@ export const topsis = async (
       idealNeg[j] = Math.max(...col);
     }
   }
+  trace.idealPositive = idealPos;
+  trace.idealNegative = idealNeg;
+
+  // console.log("Ideal+", idealPos);
+  // console.log("Ideal-", idealNeg);
 
   // 6. Hitung D+ dan D-, dan skor preferensi
   const results = alternatives.map((alt, i) => {
@@ -119,11 +166,12 @@ export const topsis = async (
     return {
       id: alt.id,
       name: alt.name,
-      // score,
+      Dpos: parseFloat(Dpos.toFixed(4)),
+      Dneg: parseFloat(Dneg.toFixed(4)),
       score: parseFloat(score.toFixed(4)),
     };
   });
-
+  trace.resultTopsis = results;
   //console.log("Hasil akhir TOPSIS:", results);
 
   // 7. urutkan berdasarkan skor tertinggi
@@ -143,5 +191,8 @@ export const topsis = async (
     );
   }
 
-  return results;
+  return {
+    results,
+    trace,
+  };
 };

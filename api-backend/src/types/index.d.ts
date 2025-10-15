@@ -11,9 +11,38 @@ export interface CriteriaTopsis {
   attribute: "benefit" | "cost";
 }
 
+export interface BobotTopsis {
+  id: number;
+  id_criteria: number;
+  min_value: number;
+  max_value: number | null;
+  score: number;
+  criteria_name?: string;
+  criteria_weight?: number;
+  criteria_attribute?: "benefit" | "cost";
+}
+
+export interface CriteriaRendemen {
+  id: number;
+  name: string;
+  min_value: number;
+  max_value: number;
+}
+
+export interface Production {
+  id: number;
+  name: string;
+  kuantum_gabah: number;
+  kuantum_beras: number;
+  rendemen: number;
+}
+
 export interface ScoreTopsis {
+  id: number;
   alternative_id: number;
+  alternative_name: string;
   criteria_id: number;
+  criteria_name: string;
   value: number;
 }
 
